@@ -21,6 +21,7 @@ typedef struct {
     int tau;
 } Process;
 
+// A struct that contains the the process, the timestamp when a process finishes its state, and state of the process
 typedef struct {
     Process* process;
     int time;
@@ -88,6 +89,18 @@ Event* popEvent(EventQueue* q) {
     return event;
 }
 
+const char* stateToString(State s) {
+    switch (s) {
+        case ARRIVE:      return "ARRIVE";
+        case READY:       return "READY";
+        case RUNNING:     return "RUNNING";
+        case PREEMPTION:  return "PREEMPTION";
+        case WAITING:     return "WAITING";
+        case TERMINATED:  return "TERMINATED";
+        default:          return "UNKNOWN";
+    }
+}
+
 void printEventQueue(EventQueue* q) {
     if (q->size == 0) {
         printf("[Q empty]\n");
@@ -97,7 +110,7 @@ void printEventQueue(EventQueue* q) {
     printf("Event Queue: ");
     for (int i = 0; i < q->size; i++) {
         Event* e = q->events[i];
-        printf("[Time: %d, Process: %s] ", e->time, e->process->pid);
+        printf("[Time: %d, Process: %s, State: %s]", e->time, e->process->pid, stateToString(e->state));
     }
     printf("\n");
 }
@@ -182,7 +195,6 @@ void FCFS(Process** processes, int n, int tcs) {
     int cpuIdle = -1;
     while (terminatedCount < n) {
         // Handle Events
-        printEventQueue(&eq);
         Event* e = popEvent(&eq);
         time = e->time;
         // Arrival
@@ -197,7 +209,8 @@ void FCFS(Process** processes, int n, int tcs) {
             if (cpuIdle == -1 && time >= cpuFreeAt){
                 Event* newEvent = createEvent(e->process, time + tcs/2, READY);
                 insertEventFCFS(&eq, newEvent);
-                cpuFreeAt += time + tcs/2 + e->process->cpuBursts[e->process->numBursts - e->process->burstsLeft];
+                cpuFreeAt = time + tcs/2 + e->process->cpuBursts[e->process->numBursts - e->process->burstsLeft];
+                dequeue(&q);
             }
             // CPU is not free
             else{
@@ -209,21 +222,20 @@ void FCFS(Process** processes, int n, int tcs) {
         // Start CPU Burst
         else if (e->state == READY){
             cpuIdle = 0;
-            dequeue(&q);
-            int burstTime = *(e->process->cpuBursts+(e->process->numBursts - e->process->burstsLeft));
+            if (e->process->pid == q.procs[0]->pid){
+                dequeue(&q);
+            }
+            int burstTime = *(e->process->cpuBursts + (e->process->numBursts - e->process->burstsLeft));
             printf("time %dms: Process %s started using the CPU for %dms burst [Q", time, e->process->pid, burstTime);
             printQueue(&q);
             printf("]\n");
             e->process->burstsLeft--;
-
-            // Last CPU burst
+            cpuFreeAt = time + burstTime;
             if (e->process->burstsLeft == 0){
-                Event* endCpu = createEvent(e->process, time + burstTime, TERMINATED);
+                Event* endCpu = createEvent(e->process, cpuFreeAt, TERMINATED);
                 insertEventFCFS(&eq, endCpu);
-            } 
-            // Add finish CPU burst to event queue
-            else{
-                Event* endCpu = createEvent(e->process, time + burstTime, RUNNING);
+            } else{
+                Event* endCpu = createEvent(e->process, cpuFreeAt, RUNNING);
                 insertEventFCFS(&eq, endCpu);
             }
         }
@@ -231,11 +243,15 @@ void FCFS(Process** processes, int n, int tcs) {
         else if(e->state == RUNNING){
             // CPU Burst complete
             cpuIdle = -1;
-            printf("time %dms: Process %s completed a CPU burst; %d bursts to go [Q", time, e->process->pid, e->process->burstsLeft);
+            if (e->process->burstsLeft == 1){
+                printf("time %dms: Process %s completed a CPU burst; %d burst to go [Q", time, e->process->pid, e->process->burstsLeft);
+            } else{
+                printf("time %dms: Process %s completed a CPU burst; %d bursts to go [Q", time, e->process->pid, e->process->burstsLeft);
+            }
             printQueue(&q);
             printf("]\n");
 
-            // IO Burst
+            // IO Burst start
             int ioCompTime = time + *(e->process->ioBursts+(e->process->numBursts - e->process->burstsLeft - 1)) + tcs/2;
             printf("time %dms: Process %s switching out of CPU; blocking on I/O until time %dms [Q", time, e->process->pid, ioCompTime);
             printQueue(&q);
@@ -249,12 +265,30 @@ void FCFS(Process** processes, int n, int tcs) {
             printf("time %dms: Process %s completed I/O; added to ready queue [Q", time, e->process->pid);
             printQueue(&q);
             printf("]\n");
-            cpuFreeAt += *(e->process->cpuBursts+(e->process->numBursts - e->process->burstsLeft)) + tcs;
-            Event* cpuBurst = createEvent(e->process, cpuFreeAt, READY);
-            insertEventFCFS(&eq, cpuBurst);
+            // Get the burst time of the last process ready to run
+            if (q.size == 1 && cpuIdle == -1){
+                cpuFreeAt = time;
+                Event* cpuBurst = createEvent(e->process, cpuFreeAt + tcs/2, READY);
+                insertEventFCFS(&eq, cpuBurst);
+            } else if (q.size > 1){
+                int lastProcBurst = time;
+                for (int i = eq.size; i > 0; i--){
+                    if (eq.events[i]->state != WAITING){
+                        lastProcBurst = eq.events[i]->time + eq.events[i]->process->cpuBursts[eq.events[i]->process->numBursts - eq.events[i]->process->burstsLeft];
+                        break;
+                    }
+                }
+                // Creates an event while considering CPU Bursts times in the queue
+                Event* cpuBurst = createEvent(e->process, lastProcBurst + tcs, READY);
+                insertEventFCFS(&eq, cpuBurst);
+            } else {
+                Event* cpuBurst = createEvent(e->process, cpuFreeAt + tcs, READY);
+                insertEventFCFS(&eq, cpuBurst);
+            }
         }
         // Termination
         else if (e->state == TERMINATED){
+            cpuIdle = -1;
             printf("time %dms: Process %s terminated [Q", time, e->process->pid);
             printQueue(&q);
             printf("]\n");
@@ -262,7 +296,7 @@ void FCFS(Process** processes, int n, int tcs) {
         }
         free(e);
     }
-    printf("time %dms: Simulator ended for FCFS [Q empty]\n", time);
+    printf("time %dms: Simulator ended for FCFS [Q empty]\n", time + tcs/2);
 
     free(q.procs);
 }
@@ -391,8 +425,11 @@ int main(int argc, char** argv){
         perror("ERROR: Negative timeslice");
         return EXIT_FAILURE;
     }
-
-    printf("<<< -- process set (n=%d) with %d CPU-bound process\n", n, ncpu);
+    if (ncpu == 1){
+        printf("<<< -- process set (n=%d) with %d CPU-bound process\n", n, ncpu);
+    } else {
+        printf("<<< -- process set (n=%d) with %d CPU-bound processes\n", n, ncpu);
+    }
     printf("<<< -- seed=%d; lambda=%.6f; bound=%d\n\n", seed,lambda, upperBound);
 
     // Simulation Calcs
@@ -421,10 +458,19 @@ int main(int argc, char** argv){
         // For SJF/SRT
         (*(processes+i))->tau = (int)ceil(1.0 / lambda);
 
+        // Print Process Info
         if (i < ncpu){
-            printf("CPU-bound process %s: arrival time %dms; %d CPU bursts:\n", (*(processes+i))->pid, arrivalTime, numBursts);
+            if (numBursts == 1){
+                printf("CPU-bound process %s: arrival time %dms; %d CPU burst:\n", (*(processes+i))->pid, arrivalTime, numBursts);
+            } else {
+                printf("CPU-bound process %s: arrival time %dms; %d CPU bursts:\n", (*(processes+i))->pid, arrivalTime, numBursts);
+            }
         } else{
-            printf("I/O-bound process %s: arrival time %dms; %d CPU bursts:\n",(*(processes+i))->pid, arrivalTime, numBursts);
+            if (numBursts == 1){
+                printf("I/O-bound process %s: arrival time %dms; %d CPU burst:\n",(*(processes+i))->pid, arrivalTime, numBursts);
+            } else {
+                printf("I/O-bound process %s: arrival time %dms; %d CPU bursts:\n",(*(processes+i))->pid, arrivalTime, numBursts);
+            }
         }
         
         // Simulate CPU Bursts

@@ -195,6 +195,7 @@ void FCFS(Process** processes, int n, int tcs) {
     int cpuIdle = -1;
     while (terminatedCount < n) {
         // Handle Events
+        // printEventQueue(&eq);
         Event* e = popEvent(&eq);
         time = e->time;
         // Arrival

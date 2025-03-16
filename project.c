@@ -21,7 +21,9 @@ typedef struct {
     int tau;
 } Process;
 
-// A struct that contains the the process, the timestamp when a process finishes its state, and state of the process
+// Process: Process associated with the event
+// Time: timestamp when a process finishes its state
+// State: state of the process
 typedef struct {
     Process* process;
     int time;
@@ -53,7 +55,7 @@ void initEventQueue(EventQueue* q, int capacity) {
 // Insert an event into the event queue for FCFS
 void insertEventFCFS(EventQueue* q, Event* event) {
     if (q->size >= q->capacity) {
-        fprintf(stderr, "EventQueue is full. Cannot insert event.\n");
+        fprintf(stderr, "ERROR: EventQueue is full. Cannot insert event.\n");
         return;
     }
     
@@ -168,7 +170,7 @@ void printQueue(Queue *q) {
     }
 }
 
-// NEEDS WORK
+// First Come First Serve
 void FCFS(Process** processes, int n, int tcs) {
     // Set all processes to ARRIVE and initialize burstsLeft
     for (int i = 0; i < n; i++) {
@@ -209,7 +211,7 @@ void FCFS(Process** processes, int n, int tcs) {
             if (cpuIdle == -1 && time >= cpuFreeAt){
                 Event* newEvent = createEvent(e->process, time + tcs/2, READY);
                 insertEventFCFS(&eq, newEvent);
-                cpuFreeAt = time + tcs/2 + e->process->cpuBursts[e->process->numBursts - e->process->burstsLeft];
+                cpuFreeAt = time + e->process->cpuBursts[e->process->numBursts - e->process->burstsLeft] + tcs/2;
                 dequeue(&q);
             }
             // CPU is not free
@@ -230,13 +232,16 @@ void FCFS(Process** processes, int n, int tcs) {
             printQueue(&q);
             printf("]\n");
             e->process->burstsLeft--;
-            cpuFreeAt = time + burstTime;
             if (e->process->burstsLeft == 0){
-                Event* endCpu = createEvent(e->process, cpuFreeAt, TERMINATED);
+                Event* endCpu = createEvent(e->process, time + burstTime, TERMINATED);
                 insertEventFCFS(&eq, endCpu);
             } else{
-                Event* endCpu = createEvent(e->process, cpuFreeAt, RUNNING);
+                Event* endCpu = createEvent(e->process, time + burstTime, RUNNING);
                 insertEventFCFS(&eq, endCpu);
+            }
+            // updated the time when the CPU is free
+            if (cpuFreeAt < time + burstTime){
+                cpuFreeAt = time + burstTime;
             }
         }
         // CPU Burst complete
@@ -261,6 +266,9 @@ void FCFS(Process** processes, int n, int tcs) {
         }
         // IO End
         else if (e->state == WAITING){
+            if (cpuIdle == -1){
+                dequeue(&q);
+            }
             enqueue(&q, e->process);
             printf("time %dms: Process %s completed I/O; added to ready queue [Q", time, e->process->pid);
             printQueue(&q);
@@ -273,14 +281,17 @@ void FCFS(Process** processes, int n, int tcs) {
             } else if (q.size > 1){
                 int lastProcBurst = time;
                 for (int i = eq.size; i > 0; i--){
-                    if (eq.events[i]->state != WAITING){
+                    if (eq.events[i]->state == READY){
                         lastProcBurst = eq.events[i]->time + eq.events[i]->process->cpuBursts[eq.events[i]->process->numBursts - eq.events[i]->process->burstsLeft];
                         break;
                     }
                 }
+                
                 // Creates an event while considering CPU Bursts times in the queue
                 Event* cpuBurst = createEvent(e->process, lastProcBurst + tcs, READY);
                 insertEventFCFS(&eq, cpuBurst);
+                int burstTime = e->process->cpuBursts[e->process->numBursts - e->process->burstsLeft];
+                cpuFreeAt = lastProcBurst + burstTime + tcs;
             } else {
                 Event* cpuBurst = createEvent(e->process, cpuFreeAt + tcs, READY);
                 insertEventFCFS(&eq, cpuBurst);

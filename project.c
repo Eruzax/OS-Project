@@ -21,9 +21,14 @@ typedef struct {
     State state;
     int tau;
     // For writing to simout
+    int readyTime;
     int wait;
+    int startTime;
     int turnaround;
     int cs;
+    // For RR
+    int preemptions;
+    int oneTS;
 } Process;
 
 // Process: Process associated with the event
@@ -242,15 +247,21 @@ int getTimeOfLastEvent(EventQueue* eq, int time, int tslice){
 
 // First Come First Serve
 int FCFS(Process** processes, int n, int tcs) {
-    // Set all processes to ARRIVE and initialize burstsLeft
+    // Reset all processes
     for (int i = 0; i < n; i++) {
         (*(processes+i))->state = ARRIVE;
         (*(processes+i))->burstsLeft = (*(processes+i))->numBursts;
+        for (int j = 0; j < (*(processes+i))->numBursts; j++){
+            (*(processes+i))->remainingBursts[j] = (*(processes+i))->cpuBursts[j];
+        }
         // For writing to simout
+        (*(processes+i))->readyTime = 0;
         (*(processes+i))->wait = 0;
+        (*(processes+i))->startTime = 0;
         (*(processes+i))->turnaround = 0;
         (*(processes+i))->cs = 0;
     }
+
 
     // Start Simultaion
     Queue q;
@@ -295,10 +306,17 @@ int FCFS(Process** processes, int n, int tcs) {
                 insertEventFCFS(&eq, newEvent);
                 cpuFreeAt += e->process->cpuBursts[e->process->numBursts - e->process->burstsLeft] + tcs;
             }
+
+            // For writing to simout
+            e->process->startTime = time + tcs/2;   // Turnaround time
+            e->process->readyTime = time;           // Wait time
         }
         // Start CPU Burst
         else if (e->state == READY){
+            e->process->cs++;                                           // Context Switch
+            e->process->wait += time - e->process->readyTime - tcs/2;   // Wait time
             cpuIdle = 0;
+
             if (e->process->pid == q.procs[0]->pid){
                 dequeue(&q);
             }
@@ -321,8 +339,11 @@ int FCFS(Process** processes, int n, int tcs) {
         }
         // CPU Burst complete
         else if(e->state == RUNNING){
+            e->process->turnaround += time + (tcs/2) - e->process->startTime;   // Turnaround time
+
             // CPU Burst complete
             cpuIdle = -1;
+
             if (e->process->burstsLeft == 1){
                 printf("time %dms: Process %s completed a CPU burst; %d burst to go [Q", time, e->process->pid, e->process->burstsLeft);
             } else{
@@ -371,9 +392,14 @@ int FCFS(Process** processes, int n, int tcs) {
                 Event* cpuBurst = createEvent(e->process, cpuFreeAt + tcs, READY);
                 insertEventFCFS(&eq, cpuBurst);
             }
+
+            // For writing to simout
+            e->process->startTime = time;   // Turnaround time
+            e->process->readyTime = time;   // Wait time
         }
         // Termination
         else if (e->state == TERMINATED){
+            e->process->turnaround += time + tcs - e->process->startTime; // Turnaround time
             cpuIdle = -1;
             printf("time %dms: Process %s terminated [Q", time, e->process->pid);
             printQueue(&q);
@@ -694,8 +720,9 @@ void SRT(){
 
 }
 
-void RR(Process** processes, int n, int tcs, int tslice){
-    // Set all processes to ARRIVE and initialize burstsLeft
+// Round Robin
+int RR(Process** processes, int n, int tcs, int tslice){
+    // Reset all processes
     for (int i = 0; i < n; i++) {
         (*(processes+i))->state = ARRIVE;
         (*(processes+i))->burstsLeft = (*(processes+i))->numBursts;
@@ -703,10 +730,15 @@ void RR(Process** processes, int n, int tcs, int tslice){
             (*(processes+i))->remainingBursts[j] = (*(processes+i))->cpuBursts[j];
         }
         // For writing to simout
+        (*(processes+i))->readyTime = 0;
         (*(processes+i))->wait = 0;
+        (*(processes+i))->startTime = 0;
         (*(processes+i))->turnaround = 0;
         (*(processes+i))->cs = 0;
+        (*(processes+i))->preemptions = 0;
+        (*(processes+i))->oneTS = 0;
     }
+
 
     // Start Simultaion
     Queue q;
@@ -730,9 +762,7 @@ void RR(Process** processes, int n, int tcs, int tslice){
         // Handle Events
         Event* e = popEvent(&eq);
         time = e->time;
-        // printf("\n");
-        // printEventQueue(&eq);
-        // printf("CPU FREE: %d\n", cpuFreeAt);
+
         // Arrival
         if (e->state == ARRIVE){
             // Print and add to queue
@@ -767,13 +797,21 @@ void RR(Process** processes, int n, int tcs, int tslice){
                     cpuFreeAt += tslice + tcs;
                 }
             }
+
+            // For writing to simout
+            e->process->readyTime = time;           // Wait time
+            e->process->startTime = time + tcs/2;   // Turnaround time
         }
         // Start CPU Burst
         else if (e->state == READY){
+            e->process->cs++;                                           // Context Switch
+            e->process->wait += time - e->process->readyTime - tcs/2;   // Wait time
+            
             cpuIdle = 0;
             if (e->process->pid == q.procs[0]->pid){
                 dequeue(&q);
             }
+
             int burstTime = *(e->process->remainingBursts + (e->process->numBursts - e->process->burstsLeft));
             int fullBurst = *(e->process->cpuBursts + (e->process->numBursts - e->process->burstsLeft));
             if (burstTime != fullBurst){
@@ -805,6 +843,11 @@ void RR(Process** processes, int n, int tcs, int tslice){
                 Event* endCpu = createEvent(e->process, time + tslice, PREEMPTION);
                 insertEventFCFS(&eq, endCpu);
             }
+
+            // For writing to simout
+            if (fullBurst <= tslice){
+                e->process->oneTS++;
+            }
         } 
         // Preemption
         else if (e->state == PREEMPTION) {
@@ -833,10 +876,16 @@ void RR(Process** processes, int n, int tcs, int tslice){
                 printf("]\n");
                 Event* enqueue = createEvent(e->process, time + tcs/2, ENQUEUE);
                 insertEventFCFS(&eq, enqueue);
+
+                // For writing to simout
+                e->process->preemptions++;              // Preemptions
             }
         } 
         // Add to queue after process is preempted
         else if (e->state == ENQUEUE){
+            // For writing to simout
+            e->process->readyTime = time;   // Wait time
+
             enqueue(&q, e->process, time);
             // Creates an event while considering CPU Bursts times in the queue
             Event* cpuBurst = createEvent(e->process, cpuFreeAt + tcs, READY);
@@ -847,6 +896,8 @@ void RR(Process** processes, int n, int tcs, int tslice){
         }
         // CPU Burst complete
         else if(e->state == RUNNING){
+            e->process->turnaround += time + (tcs/2) - e->process->startTime;   // Turnaround time
+
             // CPU Burst complete
             cpuIdle = -1;
             e->process->burstsLeft--;
@@ -892,6 +943,8 @@ void RR(Process** processes, int n, int tcs, int tslice){
                 dequeue(&q);
                 int lastProcBurst = getTimeOfLastEvent(&eq, time, tslice);
                 cpuFreeAt = lastProcBurst;
+
+                e->process->startTime = time + tcs/2;    // Turnaround Time
             } 
             // Different process from the current process running
             else {
@@ -899,10 +952,16 @@ void RR(Process** processes, int n, int tcs, int tslice){
                 insertEventFCFS(&eq, cpuBurst);
                 int lastProcBurst = getTimeOfLastEvent(&eq, time, tslice);
                 cpuFreeAt = lastProcBurst;
+
+                e->process->startTime = time + tcs;    // Turnaround Time
             }
+
+            // For writing to simout
+            e->process->readyTime = time;          // Wait time
         }
         // Termination
         else if (e->state == TERMINATED){
+            e->process->turnaround += time + tcs - e->process->startTime; // Turnaround time
             cpuIdle = -1;
             e->process->burstsLeft--;
             printf("time %dms: Process %s terminated [Q", time, e->process->pid);
@@ -912,9 +971,12 @@ void RR(Process** processes, int n, int tcs, int tslice){
         }
         free(e);
     }
-    printf("time %dms: Simulator ended for RR [Q empty]\n", time + tcs/2);
+
+    time += tcs/2;
+    printf("time %dms: Simulator ended for RR [Q empty]\n", time);
     freeEventQueue(&eq);
     free(q.procs);
+    return time;
 }
 
 
@@ -1096,27 +1158,62 @@ int main(int argc, char** argv){
     fprintf(fp, "-- CPU-bound average I/O burst time: %.3f ms\n", ceil3(cpuIOBurst/numCpuIOBurst) );
     fprintf(fp, "-- I/O-bound average I/O burst time: %.3f ms\n", ceil3(ioIOBurst/numIoIOBurst) );
     fprintf(fp, "-- overall average I/O burst time: %.3f ms\n\n", ceil3( (cpuIOBurst + ioIOBurst)/(numCpuIOBurst+numIoIOBurst)) );
+    
 
     // FCFS
     int fcfsTime = FCFS(processes, n, tcs);
     // Write FCFS 
     fprintf(fp, "Algorithm FCFS\n");
     fprintf(fp, "-- CPU utilization: %.3f%%\n", ceil3((cpuBoundBurst + ioBoundBurst)/fcfsTime * 100));
-    // fprintf(fp, "-- CPU-bound average wait time: %.3f ms\n", ceil3(fcfs_cpu_bound_avg_wait));
-    // fprintf(fp, "-- I/O-bound average wait time: %.3f ms\n", ceil3(fcfs_io_bound_avg_wait));
-    // fprintf(fp, "-- overall average wait time: %.3f ms\n", ceil3(fcfs_overall_avg_wait));
-    // fprintf(fp, "-- CPU-bound average turnaround time: %.3f ms\n", ceil3(fcfs_cpu_bound_avg_turnaround));
-    // fprintf(fp, "-- I/O-bound average turnaround time: %.3f ms\n", ceil3(fcfs_io_bound_avg_turnaround));
-    // fprintf(fp, "-- overall average turnaround time: %.3f ms\n", ceil3(fcfs_overall_avg_turnaround));
-    // fprintf(fp, "-- CPU-bound number of context switches: %d\n", fcfs_cpu_bound_context_switches);
-    // fprintf(fp, "-- I/O-bound number of context switches: %d\n", fcfs_io_bound_context_switches);
-    // fprintf(fp, "-- overall number of context switches: %d\n", fcfs_overall_context_switches);
+
+    // calc wait time
+    double cpuWait = 0.0;
+    double ioWait = 0.0;
+    for (int i = 0; i < n; i++){
+        if (i < ncpu) {
+            cpuWait+= processes[i]->wait;
+        } else {
+            ioWait += processes[i]->wait;
+        }
+    }
+
+    fprintf(fp, "-- CPU-bound average wait time: %.3f ms\n", ceil3(cpuWait / numCpuBurst));
+    fprintf(fp, "-- I/O-bound average wait time: %.3f ms\n", ceil3(ioWait / numIoBurst));
+    fprintf(fp, "-- overall average wait time: %.3f ms\n", ceil3( (cpuWait + ioWait) / (numCpuBurst+numIoBurst) ));
+    
+    // calc turnaround time
+    double fcfsCpuTR = 0.0;
+    double fcfsIoTR = 0.0;
+    for (int i = 0; i < n; i++){
+        if (i < ncpu) {
+            fcfsCpuTR += processes[i]->turnaround;
+        } else {
+            fcfsIoTR += processes[i]->turnaround;
+        }
+    }
+    fprintf(fp, "-- CPU-bound average turnaround time: %.3f ms\n", ceil3(fcfsCpuTR / numCpuBurst));
+    fprintf(fp, "-- I/O-bound average turnaround time: %.3f ms\n", ceil3(fcfsIoTR / numIoBurst));
+    fprintf(fp, "-- overall average turnaround time: %.3f ms\n", ceil3( (fcfsCpuTR + fcfsIoTR) / (numCpuBurst+numIoBurst) ));
+    
+    // calc context switches
+    int fcfsCpuCs = 0;
+    int fcfsIoCs = 0;
+    for (int i = 0; i < n; i++){
+        if (i < ncpu) {
+            fcfsCpuCs  += processes[i]->cs;
+        } else {
+            fcfsIoCs += processes[i]->cs;
+        }
+    }
+    fprintf(fp, "-- CPU-bound number of context switches: %d\n", fcfsCpuCs);
+    fprintf(fp, "-- I/O-bound number of context switches: %d\n", fcfsIoCs);
+    fprintf(fp, "-- overall number of context switches: %d\n", fcfsCpuCs + fcfsIoCs);
     fprintf(fp, "-- CPU-bound number of preemptions: 0\n");
     fprintf(fp, "-- I/O-bound number of preemptions: 0\n");
     fprintf(fp, "-- overall number of preemptions: 0\n\n");
 
     // SJF
-    
+
     // Write SJF 
     fprintf(fp, "Algorithm SJF\n");
     fprintf(fp, "-- CPU utilization: %.3f%%\n", ceil3((cpuBoundBurst + ioBoundBurst)/fcfsTime * 100));
@@ -1142,27 +1239,80 @@ int main(int argc, char** argv){
     fprintf(fp, "-- overall number of preemptions: 0\n\n");
 
     // RR
-    RR(processes, n, tcs, tslice);
+    int rrTime = RR(processes, n, tcs, tslice);
     // Write RR
     fprintf(fp, "Algorithm RR\n");
-    // fprintf(fp, "-- CPU utilization: %.3f%%\n", ceil3(rr_cpu_utilization));
-    // fprintf(fp, "-- CPU-bound average wait time: %.3f ms\n", ceil3(rr_cpu_bound_avg_wait));
-    // fprintf(fp, "-- I/O-bound average wait time: %.3f ms\n", ceil3(rr_io_bound_avg_wait));
-    // fprintf(fp, "-- overall average wait time: %.3f ms\n", ceil3(rr_overall_avg_wait));
-    // fprintf(fp, "-- CPU-bound average turnaround time: %.3f ms\n", ceil3(rr_cpu_bound_avg_turnaround));
-    // fprintf(fp, "-- I/O-bound average turnaround time: %.3f ms\n", ceil3(rr_io_bound_avg_turnaround));
-    // fprintf(fp, "-- overall average turnaround time: %.3f ms\n", ceil3(rr_overall_avg_turnaround));
-    // fprintf(fp, "-- CPU-bound number of context switches: %d\n", rr_cpu_bound_context_switches);
-    // fprintf(fp, "-- I/O-bound number of context switches: %d\n", rr_io_bound_context_switches);
-    // fprintf(fp, "-- overall number of context switches: %d\n", rr_overall_context_switches);
-    // fprintf(fp, "-- CPU-bound number of preemptions: %d\n", rr_cpu_bound_preemptions);
-    // fprintf(fp, "-- I/O-bound number of preemptions: %d\n", rr_io_bound_preemptions);
-    // fprintf(fp, "-- overall number of preemptions: %d\n", rr_overall_preemptions);
+    fprintf(fp, "-- CPU utilization: %.3f%%\n", ceil3((cpuBoundBurst + ioBoundBurst)/rrTime * 100));
+
+    // calc wait time
+    double rrCpuWait = 0.0;
+    double rrIoWait = 0.0;
+    for (int i = 0; i < n; i++){
+        if (i < ncpu) {
+            rrCpuWait+= processes[i]->wait;
+        } else {
+            rrIoWait += processes[i]->wait;
+        }
+    }
+    fprintf(fp, "-- CPU-bound average wait time: %.3f ms\n", ceil3(rrCpuWait / numCpuBurst));
+    fprintf(fp, "-- I/O-bound average wait time: %.3f ms\n", ceil3(rrIoWait / numIoBurst));
+    fprintf(fp, "-- overall average wait time: %.3f ms\n", ceil3( (rrCpuWait + rrIoWait) / (numCpuBurst+numIoBurst) ));
+
+    // calc turnaround time
+    double rrCpuTR = 0.0;
+    double rrIoTR = 0.0;
+    for (int i = 0; i < n; i++){
+        if (i < ncpu) {
+            rrCpuTR += processes[i]->turnaround;
+        } else {
+            rrIoTR += processes[i]->turnaround;
+        }
+    }
+    fprintf(fp, "-- CPU-bound average turnaround time: %.3f ms\n", ceil3(rrCpuTR / numCpuBurst));
+    fprintf(fp, "-- I/O-bound average turnaround time: %.3f ms\n", ceil3(rrIoTR / numIoBurst));
+    fprintf(fp, "-- overall average turnaround time: %.3f ms\n", ceil3( (rrCpuTR + rrIoTR) / (numCpuBurst+numIoBurst) ));
+
+    // calc context switches
+    int RRCpuCs = 0;
+    int RRIoCs = 0;
+    for (int i = 0; i < n; i++){
+        if (i < ncpu) {
+            RRCpuCs += processes[i]->cs;
+        } else {
+            RRIoCs += processes[i]->cs;
+        }
+    }
+    fprintf(fp, "-- CPU-bound number of context switches: %d\n", RRCpuCs);
+    fprintf(fp, "-- I/O-bound number of context switches: %d\n", RRIoCs);
+    fprintf(fp, "-- overall number of context switches: %d\n", RRCpuCs + RRIoCs);
+
+    // calc preemptions
+    int cpuPre = 0;
+    int ioPre = 0;
+    for (int i = 0; i < n; i++){
+        if (i < ncpu) {
+            cpuPre += processes[i]->preemptions;
+        } else {
+            ioPre += processes[i]->preemptions;
+        }
+    }
+    fprintf(fp, "-- CPU-bound number of preemptions: %d\n", cpuPre);
+    fprintf(fp, "-- I/O-bound number of preemptions: %d\n", ioPre);
+    fprintf(fp, "-- overall number of preemptions: %d\n", cpuPre + ioPre);
     
     // Additional RR algorithm stats
-    // fprintf(fp, "-- CPU-bound percentage of CPU bursts completed within one time slice: %.3f%%\n", ceil3(rr_cpu_bound_pct_within_slice));
-    // fprintf(fp, "-- I/O-bound percentage of CPU bursts completed within one time slice: %.3f%%\n", ceil3(rr_io_bound_pct_within_slice));
-    // fprintf(fp, "-- overall percentage of CPU bursts completed within one time slice: %.3f%%\n", ceil3(rr_overall_pct_within_slice));
+    int cpuOneTS = 0;
+    int ioOneTS = 0;
+    for (int i = 0; i < n; i++){
+        if (i < ncpu) {
+            cpuOneTS += processes[i]->oneTS;
+        } else {
+            ioOneTS += processes[i]->oneTS;
+        }
+    }
+    fprintf(fp, "-- CPU-bound percentage of CPU bursts completed within one time slice: %.3f%%\n", ceil3(100.0 * cpuOneTS/numCpuBurst) );
+    fprintf(fp, "-- I/O-bound percentage of CPU bursts completed within one time slice: %.3f%%\n", ceil3(100.0 * ioOneTS/numIoBurst) );
+    fprintf(fp, "-- overall percentage of CPU bursts completed within one time slice: %.3f%%\n", ceil3( (100.0 *(cpuOneTS + ioOneTS)/(numCpuBurst + numIoBurst)) ));
     fclose(fp);
 
     // Clean up

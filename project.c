@@ -535,7 +535,7 @@ bool insertEventSJF(EventQueue* eq, Event* event, int tcs) {
 }
 
 // Shortest Job First
-void SJF(Process** processes, int n, int tcs, double alpha, double lambda) {
+int SJF(Process** processes, int n, int tcs, double alpha, double lambda) {
     // Reset all processes
     for (int i = 0; i < n; i++) {
         (*(processes+i))->state = ARRIVE;
@@ -757,11 +757,49 @@ if tau value of the furthest along READY process in event queue is greater than 
     time += tcs/2;
     printf("time %dms: Simulator ended for SJF [Q empty]\n\n", time);
     free(q.procs);
+    return time;
 }
 //----------------------------------------------------------------------------------------------------------------------------
 
-void SRT(){
+int SRT(Process** processes, int n, int tcs, double alpha, double lambda){
+    // Reset all processes
+    for (int i = 0; i < n; i++) {
+        (*(processes+i))->state = ARRIVE;
+        (*(processes+i))->burstsLeft = (*(processes+i))->numBursts;
+        (*(processes+i))->tau = (int)ceil(1.0 / lambda);
+        for (int j = 0; j < (*(processes+i))->numBursts; j++){
+            (*(processes+i))->remainingBursts[j] = (*(processes+i))->cpuBursts[j];
+        }
+        // For writing to simout
+        (*(processes+i))->readyTime = 0;
+        (*(processes+i))->wait = 0;
+        (*(processes+i))->startTime = 0;
+        (*(processes+i))->turnaround = 0;
+        (*(processes+i))->cs = 0;
+    }
 
+    Queue q;
+    initQueue(&q, n);
+    EventQueue eq;
+    initEventQueue(&eq, n);
+    printf("time 0ms: Simulator started for SRT [Q empty]\n");
+
+    // Schedule initial arrivals
+    for (int i = 0; i < n; i++){
+        Event* newEvent = createEvent(processes[i], processes[i]->arrivalTime, ARRIVE);
+        insertEventSJF(&eq, newEvent, tcs);
+    }
+	
+    int time = 0;
+    // int terminatedCount = 0;
+    // int cpuFreeAt = 0;
+    // int cpuIdle = -1;
+
+    time += tcs/2;
+    printf("time %dms: Simulator ended for SRT [Q empty]\n\n", time);
+    freeEventQueue(&eq);
+    free(q.procs);
+    return time;
 }
 
 // Round Robin
@@ -1004,7 +1042,7 @@ int RR(Process** processes, int n, int tcs, int tslice){
                 printQueue(&q);
                 printf("]\n");
             }
-            
+
             // Same process is at the head of the queue
             if (q.size == 1 && cpuIdle == -1){
                 cpuFreeAt = time;
@@ -1284,10 +1322,10 @@ int main(int argc, char** argv){
     fprintf(fp, "-- overall number of preemptions: 0\n\n");
 
     // SJF
-    SJF(processes, n, tcs, alpha, lambda);
+    int sjfTime = SJF(processes, n, tcs, alpha, lambda);
     // Write SJF 
     fprintf(fp, "Algorithm SJF\n");
-    fprintf(fp, "-- CPU utilization: %.3f%%\n", ceil3((cpuBoundBurst + ioBoundBurst)/fcfsTime * 100));
+    fprintf(fp, "-- CPU utilization: %.3f%%\n", ceil3((cpuBoundBurst + ioBoundBurst)/sjfTime * 100));
     // fprintf(fp, "-- CPU-bound average wait time: %.3f ms\n", ceil3(fcfs_cpu_bound_avg_wait));
     // fprintf(fp, "-- I/O-bound average wait time: %.3f ms\n", ceil3(fcfs_io_bound_avg_wait));
     // fprintf(fp, "-- overall average wait time: %.3f ms\n", ceil3(fcfs_overall_avg_wait));
@@ -1302,9 +1340,19 @@ int main(int argc, char** argv){
     fprintf(fp, "-- overall number of preemptions: 0\n\n");
 
     // SRT
+    int srtTime = SRT(processes, n, tcs, alpha, lambda);
     // Write SRT
     fprintf(fp, "Algorithm SRT\n");
-
+    fprintf(fp, "-- CPU utilization: %.3f%%\n", ceil3((cpuBoundBurst + ioBoundBurst)/srtTime * 100));
+    // fprintf(fp, "-- CPU-bound average wait time: %.3f ms\n", ceil3(fcfs_cpu_bound_avg_wait));
+    // fprintf(fp, "-- I/O-bound average wait time: %.3f ms\n", ceil3(fcfs_io_bound_avg_wait));
+    // fprintf(fp, "-- overall average wait time: %.3f ms\n", ceil3(fcfs_overall_avg_wait));
+    // fprintf(fp, "-- CPU-bound average turnaround time: %.3f ms\n", ceil3(fcfs_cpu_bound_avg_turnaround));
+    // fprintf(fp, "-- I/O-bound average turnaround time: %.3f ms\n", ceil3(fcfs_io_bound_avg_turnaround));
+    // fprintf(fp, "-- overall average turnaround time: %.3f ms\n", ceil3(fcfs_overall_avg_turnaround));
+    // fprintf(fp, "-- CPU-bound number of context switches: %d\n", fcfs_cpu_bound_context_switches);
+    // fprintf(fp, "-- I/O-bound number of context switches: %d\n", fcfs_io_bound_context_switches);
+    // fprintf(fp, "-- overall number of context switches: %d\n", fcfs_overall_context_switches);
     fprintf(fp, "-- CPU-bound number of preemptions: 0\n");
     fprintf(fp, "-- I/O-bound number of preemptions: 0\n");
     fprintf(fp, "-- overall number of preemptions: 0\n\n");

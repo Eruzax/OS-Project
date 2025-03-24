@@ -886,7 +886,6 @@ int RR(Process** processes, int n, int tcs, int tslice){
 
             // For writing to simout
             e->process->readyTime = time;           // Wait time
-            e->process->startTime = time + tcs/2;   // Turnaround time
         }
         // Start CPU Burst
         else if (e->state == READY){
@@ -993,8 +992,6 @@ int RR(Process** processes, int n, int tcs, int tslice){
         }
         // CPU Burst complete
         else if(e->state == RUNNING){
-            e->process->turnaround += time + (tcs/2) - e->process->startTime;   // Turnaround time
-
             // CPU Burst complete
             cpuIdle = -1;
             e->process->burstsLeft--;
@@ -1052,8 +1049,6 @@ int RR(Process** processes, int n, int tcs, int tslice){
                 dequeue(&q);
                 int lastProcBurst = getTimeOfLastEvent(&eq, time, tslice);
                 cpuFreeAt = lastProcBurst;
-
-                e->process->startTime = time + tcs/2;    // Turnaround Time
             } 
             // Different process from the current process running
             else {
@@ -1061,8 +1056,6 @@ int RR(Process** processes, int n, int tcs, int tslice){
                 insertEventFCFS(&eq, cpuBurst);
                 int lastProcBurst = getTimeOfLastEvent(&eq, time, tslice);
                 cpuFreeAt = lastProcBurst;
-
-                e->process->startTime = time + tcs;    // Turnaround Time
             }
 
             // For writing to simout
@@ -1070,7 +1063,7 @@ int RR(Process** processes, int n, int tcs, int tslice){
         }
         // Termination
         else if (e->state == TERMINATED){
-            e->process->turnaround += time + tcs - e->process->startTime; // Turnaround time
+            e->process->turnaround = time + (tcs/2) - e->process->arrivalTime; // Turnaround time
             cpuIdle = -1;
             e->process->burstsLeft--;
             printf("time %dms: Process %s terminated [Q", time, e->process->pid);
@@ -1322,10 +1315,10 @@ int main(int argc, char** argv){
     fprintf(fp, "-- overall number of preemptions: 0\n\n");
 
     // SJF
-    int sjfTime = SJF(processes, n, tcs, alpha, lambda);
+    // int sjfTime = SJF(processes, n, tcs, alpha, lambda);
     // Write SJF 
     fprintf(fp, "Algorithm SJF\n");
-    fprintf(fp, "-- CPU utilization: %.3f%%\n", ceil3((cpuBoundBurst + ioBoundBurst)/sjfTime * 100));
+    // fprintf(fp, "-- CPU utilization: %.3f%%\n", ceil3((cpuBoundBurst + ioBoundBurst)/sjfTime * 100));
     // fprintf(fp, "-- CPU-bound average wait time: %.3f ms\n", ceil3(fcfs_cpu_bound_avg_wait));
     // fprintf(fp, "-- I/O-bound average wait time: %.3f ms\n", ceil3(fcfs_io_bound_avg_wait));
     // fprintf(fp, "-- overall average wait time: %.3f ms\n", ceil3(fcfs_overall_avg_wait));
@@ -1387,9 +1380,9 @@ int main(int argc, char** argv){
             rrIoTR += processes[i]->turnaround;
         }
     }
-    fprintf(fp, "-- CPU-bound average turnaround time: %.3f ms\n", ceil3(rrCpuTR / numCpuBurst));
-    fprintf(fp, "-- I/O-bound average turnaround time: %.3f ms\n", ceil3(rrIoTR / numIoBurst));
-    fprintf(fp, "-- overall average turnaround time: %.3f ms\n", ceil3( (rrCpuTR + rrIoTR) / (numCpuBurst+numIoBurst) ));
+    fprintf(fp, "-- CPU-bound average turnaround time: %.3f ms\n", ceil3((rrCpuTR- cpuIOBurst)/ numCpuBurst));
+    fprintf(fp, "-- I/O-bound average turnaround time: %.3f ms\n", ceil3((rrIoTR- ioIOBurst) / numIoBurst));
+    fprintf(fp, "-- overall average turnaround time: %.3f ms\n", ceil3( ((rrCpuTR- cpuIOBurst) + (rrIoTR- ioIOBurst)) / (numCpuBurst+numIoBurst) ));
 
     // calc context switches
     int RRCpuCs = 0;

@@ -289,9 +289,13 @@ int FCFS(Process** processes, int n, int tcs) {
         if (e->state == ARRIVE){
             // Print and add to queue
             enqueue(&q, e->process, time);
-            printf("time %dms: Process %s arrived; added to ready queue [Q", time, e->process->pid);
-            printQueue(&q);
-            printf("]\n");
+            // Print
+            if (time <= 10000){
+                printf("time %dms: Process %s arrived; added to ready queue [Q", time, e->process->pid);
+                printQueue(&q);
+                printf("]\n");
+            }
+
             // Create a CPU burst event
             // CPU is free
             if (cpuIdle == -1 && time >= cpuFreeAt){
@@ -321,9 +325,13 @@ int FCFS(Process** processes, int n, int tcs) {
                 dequeue(&q);
             }
             int burstTime = *(e->process->cpuBursts + (e->process->numBursts - e->process->burstsLeft));
-            printf("time %dms: Process %s started using the CPU for %dms burst [Q", time, e->process->pid, burstTime);
-            printQueue(&q);
-            printf("]\n");
+            // Print
+            if (time <= 10000){
+                printf("time %dms: Process %s started using the CPU for %dms burst [Q", time, e->process->pid, burstTime);
+                printQueue(&q);
+                printf("]\n");
+            }
+
             e->process->burstsLeft--;
             if (e->process->burstsLeft == 0){
                 Event* endCpu = createEvent(e->process, time + burstTime, TERMINATED);
@@ -344,19 +352,25 @@ int FCFS(Process** processes, int n, int tcs) {
             // CPU Burst complete
             cpuIdle = -1;
 
-            if (e->process->burstsLeft == 1){
-                printf("time %dms: Process %s completed a CPU burst; %d burst to go [Q", time, e->process->pid, e->process->burstsLeft);
-            } else{
-                printf("time %dms: Process %s completed a CPU burst; %d bursts to go [Q", time, e->process->pid, e->process->burstsLeft);
+            // Print
+            if (time <= 10000){
+                if (e->process->burstsLeft == 1){
+                    printf("time %dms: Process %s completed a CPU burst; %d burst to go [Q", time, e->process->pid, e->process->burstsLeft);
+                } else{
+                    printf("time %dms: Process %s completed a CPU burst; %d bursts to go [Q", time, e->process->pid, e->process->burstsLeft);
+                }
+                printQueue(&q);
+                printf("]\n");
             }
-            printQueue(&q);
-            printf("]\n");
 
             // IO Burst start
             int ioCompTime = time + *(e->process->ioBursts+(e->process->numBursts - e->process->burstsLeft - 1)) + tcs/2;
-            printf("time %dms: Process %s switching out of CPU; blocking on I/O until time %dms [Q", time, e->process->pid, ioCompTime);
-            printQueue(&q);
-            printf("]\n");
+            // Print
+            if (time <= 10000){
+                printf("time %dms: Process %s switching out of CPU; blocking on I/O until time %dms [Q", time, e->process->pid, ioCompTime);
+                printQueue(&q);
+                printf("]\n");
+            }
             Event* ioBurst = createEvent(e->process, ioCompTime, WAITING);
             insertEventFCFS(&eq, ioBurst);
         }
@@ -366,9 +380,14 @@ int FCFS(Process** processes, int n, int tcs) {
                 dequeue(&q);
             }
             enqueue(&q, e->process, time);
-            printf("time %dms: Process %s completed I/O; added to ready queue [Q", time, e->process->pid);
-            printQueue(&q);
-            printf("]\n");
+
+            // Print
+            if (time <= 10000){
+                printf("time %dms: Process %s completed I/O; added to ready queue [Q", time, e->process->pid);
+                printQueue(&q);
+                printf("]\n");
+            }
+
             // Get the burst time of the last process ready to run
             if (q.size == 1 && cpuIdle == -1){
                 cpuFreeAt = time;
@@ -417,13 +436,14 @@ int FCFS(Process** processes, int n, int tcs) {
 
 
 //----------------------------------------------------------------------------------------------------------------------------
+
 // Inserts a process into the ready queue in sorted order (by tau, then PID) returns true if process is inserted in the middle of the queue returns false if the process is insert at the end of queue 
+
 bool enqueueSJF(Queue* q, Process* p) {
     if (q->size >= q->capacity) {
         fprintf(stderr, "ERROR: Queue is full, cannot enqueue %s\n", p->pid);
         return false;
     }
-
     int insertIndex = q->size;
     for (int i = 0; i < q->size; i++) {
         if (p->tau < q->procs[i]->tau ||
@@ -432,40 +452,54 @@ bool enqueueSJF(Queue* q, Process* p) {
             break;
         }
     }
-
     // Shift elements rightward to make space for the new process
     for (int j = q->size; j > insertIndex; j--) {
         q->procs[j] = q->procs[j-1];
     }
     q->procs[insertIndex] = p;
     q->size++;
-    return (insertIndex != q->size);
+    return (insertIndex != q->size - 1);
+
 }
 
-Event* removeEventSJF(EventQueue* q, int eventIndex){
-    if (q->size == 0 || eventIndex >= q->size || eventIndex < 0){ 				
-    	return NULL;
-	}
+void updateProcessOrder(EventQueue* eq, Event* event, int insertIndex, int tcs) {
+	// update next process times = prevProcTime + burstTimeOfProcess + tcs
+	int prevProcTime = eq->events[insertIndex]->time; // 6661
+	event->time = prevProcTime;
+	int burstTime = 0;
+	for (int i = insertIndex; i < eq->size; i++) {
+        if (eq->events[i]->state == READY) {
+        // a5 in q = 6661 + BURSTTIMEOFa4 + tcs
+        	burstTime = event->process->cpuBursts[event->process->numBursts - event->process->burstsLeft];
+			eq->events[i]->time = prevProcTime + burstTime + tcs;
+			prevProcTime = eq->events[i]->time;
+        }       
+    }    
+}
 
-    Event* event = q->events[eventIndex];
-    q->size--;
-    for (int i = eventIndex; i < q->size; i++) {
+// Removes and returns the event at the specified index in the event queue.
+Event* removeEventSJF(EventQueue* q, int index) {
+    if (index < 0 || index >= q->size)
+        return NULL;
+    Event* removedEvent = q->events[index];
+    for (int i = index; i < q->size - 1; i++) {
         q->events[i] = q->events[i + 1];
     }
-    return event;
+    q->size--;
+    return removedEvent;
 }
 
 // New function for inserting events in SJF order in the event queue.
 // For events with state READY, if they have the same event time,
 // we compare their process's tau values (and use PID as a tie-breaker).
-void insertEventSJF(EventQueue* q, Event* event) {
-    if (q->size >= q->capacity) {
+bool insertEventSJF(EventQueue* eq, Event* event, int tcs) {
+    if (eq->size >= eq->capacity) {
         fprintf(stderr, "ERROR: EventQueue is full. Cannot insert event.\n");
-        return;
+        return false;
     }
-
-    int insertIndex = q->size; // default: insert at end
-    for (int i = 0; i < q->size; i++) {
+    bool insertMid = false;
+    int insertIndex = eq->size; // default: insert at end
+    for (int i = 0; i < eq->size; i++) {
         // primary ordering by event time
 /*        if (event->time < q->events[i]->time) {*/
 /*            insertIndex = i;*/
@@ -473,37 +507,49 @@ void insertEventSJF(EventQueue* q, Event* event) {
 /*        }*/
         // if times are equal and both events are READY,
         // order by process tau then by PID
-        if ((event->process->tau < q->events[i]->process->tau ||
-           (event->process->tau == q->events[i]->process->tau &&
-            strcmp(event->process->pid, q->events[i]->process->pid) < 0)) && (event->state == READY && q->events[i]->state == READY)) 
+        if ((event->process->tau < eq->events[i]->process->tau ||
+           (event->process->tau == eq->events[i]->process->tau &&
+            strcmp(event->process->pid, eq->events[i]->process->pid) < 0)) && (event->state == READY && eq->events[i]->state == READY)) 
 		{
+			insertMid = true;
         	insertIndex = i;
         	break;
 	   	} 
-		else if (q->events[i]->time > event->time) {
+		else if (eq->events[i]->time > event->time) {
 		    insertIndex = i;
 		    break;
     	}
 	}
+	
+	if (insertMid) {
+    	updateProcessOrder(eq, event, insertIndex, tcs);
+    }
 
     // Shift existing events to make room
-    for (int j = q->size; j > insertIndex; j--) {
-        q->events[j] = q->events[j - 1];
+    for (int j = eq->size; j > insertIndex; j--) {
+        eq->events[j] = eq->events[j - 1];
     }
-    q->events[insertIndex] = event;
-    q->size++;
+    eq->events[insertIndex] = event;
+    eq->size++;
+    return insertMid;
 }
 
 // Shortest Job First
-void SJF(Process** processes, int n, int tcs, double alpha) {
-    // Initialize processes (set state, burstsLeft, etc.)
+void SJF(Process** processes, int n, int tcs, double alpha, double lambda) {
+    // Reset all processes
     for (int i = 0; i < n; i++) {
         (*(processes+i))->state = ARRIVE;
         (*(processes+i))->burstsLeft = (*(processes+i))->numBursts;
+        (*(processes+i))->tau = (int)ceil(1.0 / lambda);
         for (int j = 0; j < (*(processes+i))->numBursts; j++){
             (*(processes+i))->remainingBursts[j] = (*(processes+i))->cpuBursts[j];
         }
-        // Initial tau is already set (e.g., ceil(1/lambda))
+        // For writing to simout
+        (*(processes+i))->readyTime = 0;
+        (*(processes+i))->wait = 0;
+        (*(processes+i))->startTime = 0;
+        (*(processes+i))->turnaround = 0;
+        (*(processes+i))->cs = 0;
     }
 
     Queue q;
@@ -511,172 +557,182 @@ void SJF(Process** processes, int n, int tcs, double alpha) {
     EventQueue eq;
     initEventQueue(&eq, n);
     printf("time 0ms: Simulator started for SJF [Q empty]\n");
+
     // Schedule initial arrivals
     for (int i = 0; i < n; i++){
         Event* newEvent = createEvent(processes[i], processes[i]->arrivalTime, ARRIVE);
-        insertEventSJF(&eq, newEvent);
+        insertEventSJF(&eq, newEvent, tcs);
     }
-
+	
     int time = 0;
     int terminatedCount = 0;
     int cpuFreeAt = 0;
     int cpuIdle = -1;
+
     while (terminatedCount < n) {
     	// Handle Events
         Event* e = popEvent(&eq);
         time = e->time;
+
         if (e->state == ARRIVE) {
             // Add process to the ready queue using SJF ordering
+            // bool insertMid = 
             enqueueSJF(&q, e->process);
-            printf("time %dms: Process %s (tau %dms) arrived; added to ready queue [Q", time, e->process->pid, e->process->tau);
-            printQueue(&q);
-            printf("]\n");
+
+            // Print
+            if (time <= 10000){
+                printf("time %dms: Process %s (tau %dms) arrived; added to ready queue [Q", time, e->process->pid, e->process->tau);
+                printQueue(&q);
+                printf("]\n");
+            }
+
             if (cpuIdle == -1 && time >= cpuFreeAt) {
                 Event* newEvent = createEvent(e->process, time + tcs/2, READY);
-                insertEventSJF(&eq, newEvent);
+                insertEventSJF(&eq, newEvent, tcs);
                 cpuFreeAt = time + e->process->cpuBursts[e->process->numBursts - e->process->burstsLeft] + tcs/2;
                 dequeue(&q);
+
             } else {
                 Event* newEvent = createEvent(e->process, cpuFreeAt + tcs, READY);
-                insertEventSJF(&eq, newEvent);
+                insertEventSJF(&eq, newEvent, tcs);
                 cpuFreeAt += e->process->cpuBursts[e->process->numBursts - e->process->burstsLeft] + tcs;
             }
         }
+
         else if (e->state == READY) {
             cpuIdle = 0;
             if (q.size > 0 && strcmp(e->process->pid, q.procs[0]->pid) == 0) {
                 dequeue(&q);
             }
             int burstTime = *(e->process->cpuBursts + (e->process->numBursts - e->process->burstsLeft));
-            printf("time %dms: Process %s (tau %dms) started using the CPU for %dms burst [Q", time, e->process->pid, e->process->tau, burstTime);
-            printQueue(&q);
-            printf("]\n");
+
+            // Print
+            if (time <= 10000){
+                printf("time %dms: Process %s (tau %dms) started using the CPU for %dms burst [Q", 
+                    time, e->process->pid, e->process->tau, burstTime);
+                printQueue(&q);
+                printf("]\n");
+            }
             e->process->burstsLeft--;
 
             if (e->process->burstsLeft == 0) {
                 Event* endCpu = createEvent(e->process, time + burstTime, TERMINATED);
-                insertEventSJF(&eq, endCpu);
+                insertEventSJF(&eq, endCpu, tcs);
             } else {
                 Event* endCpu = createEvent(e->process, time + burstTime, RUNNING);
-                insertEventSJF(&eq, endCpu);
+                insertEventSJF(&eq, endCpu, tcs);
             }
-
             if (cpuFreeAt < time + burstTime) {
                 cpuFreeAt = time + burstTime;
             }
         }
+
         else if (e->state == RUNNING) {
             cpuIdle = -1;
-            if (e->process->burstsLeft == 1){
-                printf("time %dms: Process %s (tau %dms) completed a CPU burst; %d burst to go [Q", time, e->process->pid, e->process->tau, e->process->burstsLeft);
-            } else {
-                printf("time %dms: Process %s (tau %dms) completed a CPU burst; %d bursts to go [Q", time, e->process->pid, e->process->tau, e->process->burstsLeft);
+            // Print
+            if (time <= 10000){
+                if (e->process->burstsLeft == 1){
+                    printf("time %dms: Process %s (tau %dms) completed a CPU burst; %d burst to go [Q", 
+                        time, e->process->pid, e->process->tau, e->process->burstsLeft);
+                } else {
+                    printf("time %dms: Process %s (tau %dms) completed a CPU burst; %d bursts to go [Q", 
+                        time, e->process->pid, e->process->tau, e->process->burstsLeft);
+                }
                 printQueue(&q);
                 printf("]\n");
             }
+
             // Recalculate tau after the CPU burst
             int oldTau = e->process->tau;
             int completedBurst = e->process->cpuBursts[e->process->numBursts - e->process->burstsLeft - 1];
             int newTau = (int)ceil(alpha * completedBurst + (1 - alpha) * oldTau);
-            printf("time %dms: Recalculated tau for process %s: old tau %dms ==> new tau %dms [Q", time, e->process->pid, oldTau, newTau);
-            e->process->tau = newTau;
-            printQueue(&q);
-            printf("]\n");
+
+            // Print
+            if (time <= 10000){
+                printf("time %dms: Recalculated tau for process %s: old tau %dms ==> new tau %dms [Q", 
+                    time, e->process->pid, oldTau, newTau);
+                e->process->tau = newTau;
+                printQueue(&q);
+                printf("]\n");
+            }
 
 			// IO Burst start
             int ioCompTime = time + e->process->ioBursts[e->process->numBursts - e->process->burstsLeft - 1] + tcs/2;
-            printf("time %dms: Process %s switching out of CPU; blocking on I/O until time %dms [Q", time, e->process->pid, ioCompTime);
-            printQueue(&q);
-            printf("]\n");
+
+            // Print
+            if (time <= 10000){
+                printf("time %dms: Process %s switching out of CPU; blocking on I/O until time %dms [Q", 
+                    time, e->process->pid, ioCompTime);
+                printQueue(&q);
+                printf("]\n");
+            }
+
             Event* ioBurst = createEvent(e->process, ioCompTime, WAITING);
-            insertEventSJF(&eq, ioBurst);
+            insertEventSJF(&eq, ioBurst, tcs);
         }
+
         else if (e->state == WAITING) {
             if (cpuIdle == -1) {
                 dequeue(&q);
             }
+            enqueueSJF(&q, e->process);
 
-            bool insertMid = enqueueSJF(&q, e->process);
-            printf("time %dms: Process %s (tau %dms) completed I/O; added to ready queue [Q", time, e->process->pid, e->process->tau);
-            printQueue(&q);
-            printf("]\n");
+            // Print
+            if (time <= 10000){
+                printf("time %dms: Process %s (tau %dms) completed I/O; added to ready queue [Q", 
+                    time, e->process->pid, e->process->tau);
+                printQueue(&q);
+                printf("]\n");
+            }
+
             if (q.size == 1 && cpuIdle == -1) {
-            	printf("hellotest");
+            	//printf("hellotest");
                 cpuFreeAt = time;
                 Event* cpuBurst = createEvent(e->process, cpuFreeAt + tcs/2, READY);
-                insertEventSJF(&eq, cpuBurst);
+                insertEventSJF(&eq, cpuBurst, tcs);
             } else if (q.size > 1) {
 
-            
-
             /*
-
 			beginEvent Queue: [Time: 10994, Process: A0, State: RUNNING][Time: 10998, Process: A2, State: READY]
-
 			time 9200ms: Process A1 (tau 227ms) completed I/O; added to ready queue [Q A1 A2]
-
 			Event Queue: [Time: 10994, Process: A0, State: RUNNING][Time: 11184, Process: A1, State: READY][Time: 10998, Process: A2, State: READY]
-
 			TODO: 
-
 			when inserting A1 (tau 227ms) into the event queue with state READY (event queue current has A2 (tau 556ms) with state READY at the end), how do we recalculate the system elapsed time such that A2 comes later than A1
-
-
-
 if tau value of the furthest along READY process in event queue is greater than the tau value of the READY process currently being added to the event queue,   
-
 			*/
 
                 int lastProcBurst = time;
+                int i;
 
-                // Event* swapped = NULL;
-
-                for (int i = eq.size - 1; i >= 0; i--) {
-
+                for (i = eq.size - 1; i >= 0; i--) {
                     if (eq.events[i]->state == READY) {
-
                     	// TEST THIS WITH OTHER TESTCASES
-
-                    	if (!insertMid) {
-
                         //lastProcBurst = eq.events[i]->time + eq.events[i]->process->cpuBursts[eq.events[i]->process->numBursts - eq.events[i]->process->burstsLeft];
-
-                        lastProcBurst = cpuFreeAt + eq.events[i]->process->cpuBursts[eq.events[i]->process->numBursts - eq.events[i]->process->burstsLeft];
-
-                        } else {
-
-                        	lastProcBurst = cpuFreeAt;
-
-                        	// Turn this into updateReadyProcs() if issue of needing to update other READY process arises
-
-                    		// swapped = removeEventSJF(&eq, i);
-
-                        }
-
+                        //lastProcBurst = cpuFreeAt + eq.events[i]->process->cpuBursts[eq.events[i]->process->numBursts - eq.events[i]->process->burstsLeft];
+/*                        if (insertMid) {*/
+/*                        	lastProcBurst = cpuFreeAt;*/
+/*                        }*/
+						lastProcBurst = cpuFreeAt;
                         break;
-
                     } 
-
                 }
 
                 Event* cpuBurst = createEvent(e->process, lastProcBurst + tcs, READY);
                 // printf("lastProcBurst %d and tcs %d\n",lastProcBurst,tcs);
-                insertEventSJF(&eq, cpuBurst);
                 int burstTime = e->process->cpuBursts[e->process->numBursts - e->process->burstsLeft];
                 cpuFreeAt = lastProcBurst + burstTime + tcs;
 
-/*                if (insertMid && swapped != NULL) {*/
+                if (insertEventSJF(&eq, cpuBurst, tcs)) {
+					burstTime = eq.events[i+1]->process->cpuBursts[eq.events[i+1]->process->numBursts - eq.events[i+1]->process->burstsLeft];
+					//printf("cpuFreeAt: %d\n",cpuFreeAt);
+					//printf("burstTime: %d\n",burstTime);
+                	cpuFreeAt += burstTime + tcs;
 
-/*                	swapped->time = cpuFreeAt + tcs;*/
-
-/*                	insertEventFCFS(&eq, swapped);*/
-
-/*                }*/
-
+                }
             } else {
-            	printf("[hellotest2222]");
+            	//printf("[hellotest2222]");
                 Event* cpuBurst = createEvent(e->process, cpuFreeAt + tcs, READY);
-                insertEventSJF(&eq, cpuBurst);
+                insertEventSJF(&eq, cpuBurst, tcs);
             }
         }
 
@@ -689,32 +745,20 @@ if tau value of the furthest along READY process in event queue is greater than 
         }
 
         // DEBUGGING - GET RID OF LATER =============================================================================
-
         //printf("current process: %s and [Q", e->process->pid);
-
 		//printQueue(&q);
-
         //printf("]\n");
-
-        printf("[end]");
-
-        printf("[current cpuFreeAt value: %d]", cpuFreeAt);
-
-        printEventQueue(&eq);
-
+        //printf("[end]");
+        //printf("[current cpuFreeAt value: %d]", cpuFreeAt);
+        //printEventQueue(&eq);
         // DEBUGGING END - GET RID OF LATER =========================================================================
-
-		
-
         free(e);
-
     }
-
-    printf("time %dms: Simulator ended for SJF [Q empty]\n", time + tcs/2);
+    time += tcs/2;
+    printf("time %dms: Simulator ended for SJF [Q empty]\n\n", time);
     free(q.procs);
 }
 //----------------------------------------------------------------------------------------------------------------------------
-
 
 void SRT(){
 
@@ -767,9 +811,13 @@ int RR(Process** processes, int n, int tcs, int tslice){
         if (e->state == ARRIVE){
             // Print and add to queue
             enqueue(&q, e->process, time);
-            printf("time %dms: Process %s arrived; added to ready queue [Q", time, e->process->pid);
-            printQueue(&q);
-            printf("]\n");
+
+            // Print
+            if (time <= 10000){
+                printf("time %dms: Process %s arrived; added to ready queue [Q", time, e->process->pid);
+                printQueue(&q);
+                printf("]\n");
+            }
             
             // CPU is free
             int burstTime = e->process->remainingBursts[e->process->numBursts - e->process->burstsLeft];
@@ -814,14 +862,18 @@ int RR(Process** processes, int n, int tcs, int tslice){
 
             int burstTime = *(e->process->remainingBursts + (e->process->numBursts - e->process->burstsLeft));
             int fullBurst = *(e->process->cpuBursts + (e->process->numBursts - e->process->burstsLeft));
-            if (burstTime != fullBurst){
-                printf("time %dms: Process %s started using the CPU for remaining %dms of %dms burst [Q", time, e->process->pid, burstTime, fullBurst);
-                printQueue(&q);
-                printf("]\n");
-            } else {
-                printf("time %dms: Process %s started using the CPU for %dms burst [Q", time, e->process->pid, fullBurst);
-                printQueue(&q);
-                printf("]\n");
+
+            // Print
+            if (time <= 10000){
+                if (burstTime != fullBurst){
+                    printf("time %dms: Process %s started using the CPU for remaining %dms of %dms burst [Q", time, e->process->pid, burstTime, fullBurst);
+                    printQueue(&q);
+                    printf("]\n");
+                } else {
+                    printf("time %dms: Process %s started using the CPU for %dms burst [Q", time, e->process->pid, fullBurst);
+                    printQueue(&q);
+                    printf("]\n");
+                }
             }
 
             // Update bursts
@@ -854,9 +906,13 @@ int RR(Process** processes, int n, int tcs, int tslice){
             // No preemption
             int *burstRem = e->process->remainingBursts + (e->process->numBursts - e->process->burstsLeft);
             if (q.size == 0){
-                printf("time %dms: Time slice expired; no preemption because ready queue is empty [Q", time);
-                printQueue(&q);
-                printf("]\n"); 
+                // Print
+                if (time <= 10000){
+                    printf("time %dms: Time slice expired; no preemption because ready queue is empty [Q", time);
+                    printQueue(&q);
+                    printf("]\n"); 
+                }
+
                 // Last time slice before finishing
                 if (*burstRem <= tslice){
                     Event* continueBurst = createEvent(e->process, time + *burstRem, RUNNING);
@@ -871,9 +927,12 @@ int RR(Process** processes, int n, int tcs, int tslice){
                     cpuFreeAt += tslice;
                 }
             } else {
-                printf("time %dms: Time slice expired; preempting process %s with %dms remaining [Q", time, e->process->pid, *burstRem);
-                printQueue(&q);
-                printf("]\n");
+                // Print
+                if (time <= 10000){
+                    printf("time %dms: Time slice expired; preempting process %s with %dms remaining [Q", time, e->process->pid, *burstRem);
+                    printQueue(&q);
+                    printf("]\n");
+                }
                 Event* enqueue = createEvent(e->process, time + tcs/2, ENQUEUE);
                 insertEventFCFS(&eq, enqueue);
 
@@ -905,19 +964,26 @@ int RR(Process** processes, int n, int tcs, int tslice){
                 Event* termination = createEvent(e->process, time, TERMINATED);
                 insertEventFCFS(&eq, termination);
             } else {
-                if (e->process->burstsLeft == 1){
-                    printf("time %dms: Process %s completed a CPU burst; %d burst to go [Q", time, e->process->pid, e->process->burstsLeft);
-                } else{
-                    printf("time %dms: Process %s completed a CPU burst; %d bursts to go [Q", time, e->process->pid, e->process->burstsLeft);
+                // Print
+                if (time <= 10000){
+                    if (e->process->burstsLeft == 1){
+                        printf("time %dms: Process %s completed a CPU burst; %d burst to go [Q", time, e->process->pid, e->process->burstsLeft);
+                    } else{
+                        printf("time %dms: Process %s completed a CPU burst; %d bursts to go [Q", time, e->process->pid, e->process->burstsLeft);
+                    }
+                    printQueue(&q);
+                    printf("]\n");
                 }
-                printQueue(&q);
-                printf("]\n");
     
                 // IO Burst start
                 int ioCompTime = time + *(e->process->ioBursts+(e->process->numBursts - e->process->burstsLeft - 1)) + tcs/2;
-                printf("time %dms: Process %s switching out of CPU; blocking on I/O until time %dms [Q", time, e->process->pid, ioCompTime);
-                printQueue(&q);
-                printf("]\n");
+
+                // Print
+                if (time <= 10000){
+                    printf("time %dms: Process %s switching out of CPU; blocking on I/O until time %dms [Q", time, e->process->pid, ioCompTime);
+                    printQueue(&q);
+                    printf("]\n");
+                }
                 Event* ioBurst = createEvent(e->process, ioCompTime, WAITING);
                 insertEventFCFS(&eq, ioBurst);
             }
@@ -931,9 +997,14 @@ int RR(Process** processes, int n, int tcs, int tslice){
 
             // I/O Burst complete
             enqueue(&q, e->process, time);
-            printf("time %dms: Process %s completed I/O; added to ready queue [Q", time, e->process->pid);
-            printQueue(&q);
-            printf("]\n");
+
+            // Print
+            if (time <= 10000){
+                printf("time %dms: Process %s completed I/O; added to ready queue [Q", time, e->process->pid);
+                printQueue(&q);
+                printf("]\n");
+            }
+            
             // Same process is at the head of the queue
             if (q.size == 1 && cpuIdle == -1){
                 cpuFreeAt = time;
@@ -1213,7 +1284,7 @@ int main(int argc, char** argv){
     fprintf(fp, "-- overall number of preemptions: 0\n\n");
 
     // SJF
-
+    SJF(processes, n, tcs, alpha, lambda);
     // Write SJF 
     fprintf(fp, "Algorithm SJF\n");
     fprintf(fp, "-- CPU utilization: %.3f%%\n", ceil3((cpuBoundBurst + ioBoundBurst)/fcfsTime * 100));
